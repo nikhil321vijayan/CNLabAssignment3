@@ -18,7 +18,9 @@ import java.nio.ByteOrder;
  */
 public class Packet {
 
-    public static final int MIN_LEN = 11;
+    
+
+	public static final int MIN_LEN = 11;
     public static final int MAX_LEN = 11 + 1024;
 
     private final int type;
@@ -55,7 +57,8 @@ public class Packet {
     public byte[] getPayload() {
         return payload;
     }
-
+    
+    
     /**
      * Creates a builder from the current packet.
      * It's used to create another packet by re-using some parts of the current packet.
@@ -109,6 +112,7 @@ public class Packet {
      */
     public static Packet fromBuffer(ByteBuffer buf) throws IOException {
         if (buf.limit() < MIN_LEN || buf.limit() > MAX_LEN) {
+        	System.out.println("Buffe limit : " + buf.limit());
             throw new IOException("Invalid length");
         }
 
