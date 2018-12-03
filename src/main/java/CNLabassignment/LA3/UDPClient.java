@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
@@ -31,7 +32,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class UDPClient {
 
 	private static final Logger logger = LoggerFactory.getLogger(UDPClient.class);
-	static String msg = "You do not do, you do not do\n" + "Any more, black shoe\n"
+	/*static String msg = "You do not do, you do not do\n" + "Any more, black shoe\n"
 			+ "In which I have lived like a foot\n" + "For thirty years, poor and white,\n"
 			+ "Barely daring to breathe or Achoo.\n" + "\n" + "Daddy, I have had to kill you.\n"
 			+ "You died before I had time—\n" + "Marble-heavy, a bag full of God,\n"
@@ -58,7 +59,7 @@ public class UDPClient {
 			+ "I was ten when they buried you.\n" + "At twenty I tried to die\n" + "And get back, back, back to you.\n"
 			+ "I thought even the bones would do.\n" + "\n" + "But they pulled me out of the sack,\n"
 			+ "And they stuck me together with glue.\n" + "And then I knew what to do.\n" + "I made a model of you,\n"
-			+ "A man in black with a Meinkampf look";
+			+ "A man in black with a Meinkampf look";*/
 	static Packet resp;
 
 	private static boolean handshake(SocketAddress routerAddr, InetSocketAddress serverAddr, DatagramChannel channel,
@@ -106,10 +107,10 @@ public class UDPClient {
 	}
 
 	@SuppressWarnings("unchecked")
-	private static void runClient(SocketAddress routerAddr, InetSocketAddress serverAddr) throws IOException {
+	private static void runClient(SocketAddress routerAddr, InetSocketAddress serverAddr, String request) throws IOException {
 		try (DatagramChannel channel = DatagramChannel.open()) {
 
-			byte[] myBytes = msg.getBytes();
+			byte[] myBytes = request.getBytes();
 			int msgSize = myBytes.length;
 			Long packetCounter = 1L;
 			List<Packet> requestPacketList = new ArrayList<Packet>();
@@ -271,7 +272,7 @@ public class UDPClient {
 				String payload = new String(p1.getPayload(), UTF_8);
 				responseFromServer += payload;
 			}
-			logger.info("Response from the server received: " + responseFromServer);
+			logger.info("Response from the server received: \n" + responseFromServer);
 		}
 
 	}
@@ -301,6 +302,44 @@ public class UDPClient {
 		SocketAddress routerAddress = new InetSocketAddress(routerHost, routerPort);
 		InetSocketAddress serverAddress = new InetSocketAddress(serverHost, serverPort);
 
-		runClient(routerAddress, serverAddress);
+		String request = "";
+		for (int i = 0; i < args.length; i++) {
+			System.out.println("arg " + i + ": " + args[i]);
+		}
+		FSClientLibrary library = new FSClientLibrary();
+		
+			if(args[0].toLowerCase().contentEquals("get"))
+			{
+				if(args[1].equals("/"))
+				{
+					try {
+						request = library.getAllFiles();
+					} catch (UnknownHostException e) {
+						e.printStackTrace();
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+				else
+					if(args[1].matches("/.+"))
+					{	
+						String filename = "";
+						filename = args[1].substring(1);
+						System.out.println("filename: " + filename);
+						request = library.getFileContent(filename);
+					}
+			}
+			else
+				if(args[0].toLowerCase().contentEquals("post"))
+				{
+					if(args[1].matches("/.+"))
+					{
+						String toFilename = args[1].substring(1);
+						String fromFilename = args[2];
+						System.out.println("post filename :: " + toFilename);
+						request = library.postFile(toFilename, fromFilename);
+					}
+				}
+		runClient(routerAddress, serverAddress, request);
 	}
 }

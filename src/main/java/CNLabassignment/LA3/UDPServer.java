@@ -5,9 +5,15 @@ import joptsimple.OptionSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -18,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -127,15 +134,14 @@ public class UDPServer {
 			// logger.info("peer in server: " + packetList.get(0).getPeerPort() + ", " +
 			// packetList.get(0).getPeerAddress());
 			processRequest(packetList.get(packetList.size() - 1).getPeerAddress(),
-					packetList.get(packetList.size() - 1).getPeerPort(), channel, router);
+					packetList.get(packetList.size() - 1).getPeerPort(), channel, router, request);
 		}
 	}
 
-	private void processRequest(InetAddress peerAddress, int port, DatagramChannel channel, SocketAddress routerAddress)
+	private void processRequest(InetAddress peerAddress, int port, DatagramChannel channel, SocketAddress routerAddress, String request)
 			throws IOException {
-		// TODO Auto-generated method stub
 
-		String response = "A Friendly Clown\n"
+		/*String response = "A Friendly Clown\n"
 				+ "On one corner of my dresser sits a smiling toy clown on a tiny unicycle--a gift I\n"
 				+ "received last Christmas from a close friend. The clown's short yellow hair, made of yarn,\n"
 				+ "covers its ears but is parted above the eyes. The blue eyes are outlined in black with thin,\n"
@@ -169,8 +175,10 @@ public class UDPServer {
 				+ "territory, as many cat experts think, but to humiliate me because he is jealous of my\n"
 				+ "friends. After my guests have fled, I look at the old fleabag snoozing and smiling to\n"
 				+ "himself in front of the television set, and I have to forgive him for his obnoxious, but\n"
-				+ "endearing, habits.";
+				+ "endearing, habits.";*/
 
+		String response = "";
+		response = getResponse(request);
 		// packets creation
 		byte[] myBytes = response.getBytes();
 		int msgSize = myBytes.length;
@@ -266,6 +274,132 @@ public class UDPServer {
 			}
 		}
 	}
+
+	private String getResponse(String request) {
+		ServerSocket serverSocket = null;
+		String input = "";
+		String[] args;
+		File folder = new File("C:\\Users\\Nikhil Vijayan\\CNLabDemo\\CNLabAssignment2\\DefaultDirectory");
+		Date date = new Date();
+		String response = "";
+		if (request != null) {
+			if (request.contains("GET")) {
+				String[] lines = request.split("\r\n");
+				args = lines[0].split(" ");
+				if (args[1].equals("/")) {
+					File[] listOfFiles = folder.listFiles();
+					String fileNames = "";
+					for (int i = 0; i < listOfFiles.length; i++) {
+						fileNames += listOfFiles[i].getName();
+					}
+					response +="HTTP/1.1 200 OK\r\n" + "Date: " + date.toString() + "\r\n"
+							+ "Server: localhost:9002\r\n" + "Content-Length: " + fileNames.length() + "\r\n"
+							+ "Connection: Closed" + "\r\n\r\n";
+					for (int i = 0; i < listOfFiles.length; i++) {
+						if (listOfFiles[i].isFile()) {
+							response += "File " + listOfFiles[i].getName();
+						} else if (listOfFiles[i].isDirectory()) {
+							response += "Directory " + listOfFiles[i].getName();
+						}
+					}
+				}
+
+				else if (args[1].matches("/.+")) {
+					String fileToFind = args[1].substring(1);
+					String line = "", body = "";
+					if (checkFileExists(fileToFind, folder)) {
+
+						try (BufferedReader br = new BufferedReader(new FileReader(folder + "\\" + fileToFind))) {
+							while ((line = br.readLine()) != null) {
+								body += line + "\r\n";
+							}
+						} catch (FileNotFoundException e) {
+							e.printStackTrace();
+						} catch (IOException e) {
+							e.printStackTrace();
+						}
+
+						response += "HTTP/1.1 200 OK\r\n" + "Date: " + date.toString() + "\r\n"
+								+ "Server: localhost:9002\r\n" + "Content-Length: " + body.length() + "\r\n"
+								+ "Connection: Closed" + "\r\n\r\n";
+						response += body;
+					} else {
+						response += "HTTP/1.1 404 File not found\r\n" + "Date: " + date.toString() + "\r\n"
+								+ "Server: localhost:9002\r\n" + "Connection: Closed" + "\r\n\r\n";
+					}
+				}
+			}
+
+			else if (request.contains("POST")) {
+				String[] lines = request.split("\r\n");
+				args = lines[0].split(" ");
+				if (args[1].startsWith("/")) {
+					if (args[1].matches("/.+")) {
+						String fileToFind = args[1].substring(1);
+						if (checkFileExists(fileToFind, folder)) {
+							File existingFile = new File(folder + "\\" + fileToFind);
+							String body = extractBody(request);
+							try {
+								FileWriter fw = new FileWriter(existingFile, false);
+								fw.write(body);
+								fw.close();
+							} catch (IOException e) {
+								e.printStackTrace();
+							}
+							response += "HTTP/1.1 200 OK\r\n" + "Connection: keep-alive\r\n" + "Date: "
+									+ date.toString() + "\r\n" + "Server: localhost:9002\r\n" + "Content-Length: "
+									+ body.length() + "\r\n\r\n" + body;
+						} else {
+							String body = extractBody(request);
+							try {
+								File newFile = new File(folder + "\\" + fileToFind);
+								newFile.createNewFile();
+								FileWriter fw = new FileWriter(newFile, false);
+								fw.write(body);
+								fw.close();
+							} catch (IOException e) {
+								e.printStackTrace();
+							}
+							response += "HTTP/1.1 200 OK\r\n" + "Connection: keep-alive\r\n" + "Date: "
+									+ date.toString() + "\r\n" + "Server: localhost:9002\r\n" + "Content-Length: "
+									+ body.length() + "\r\n\r\n" + body + "\r\n\r\n";
+						}
+					}
+				}
+			} else {
+				response += "HTTP/1.1 400 Bad Request";
+			}
+
+		}
+		return response;
+	
+}
+
+private boolean checkFileExists(String fileToFind, File folder) {
+	boolean fileExists = false;
+	File[] listOfFiles = folder.listFiles();
+	if (listOfFiles != null)
+		for (File file1 : listOfFiles) {
+			if (file1.isDirectory()) {
+				continue;
+			} else if (fileToFind.equalsIgnoreCase(file1.getName())) {
+				fileExists = true;
+				break;
+			}
+		}
+	if (fileExists) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+private String extractBody(String requestString) {
+	String[] requestLines = requestString.split("\r\n\r\n");
+	return requestLines[requestLines.length - 1];
+}
+
+	
 
 	public static void main(String[] args) throws IOException {
 		OptionParser parser = new OptionParser();
