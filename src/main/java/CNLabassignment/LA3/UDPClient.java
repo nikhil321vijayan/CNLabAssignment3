@@ -15,10 +15,12 @@ import java.nio.channels.Selector;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
 import static java.nio.channels.SelectionKey.OP_READ;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /* Type 0 : Data
  * Type 1 : SYN
@@ -103,16 +105,19 @@ public class UDPClient {
 
 	}
 
+	@SuppressWarnings("unchecked")
 	private static void runClient(SocketAddress routerAddr, InetSocketAddress serverAddr) throws IOException {
 		try (DatagramChannel channel = DatagramChannel.open()) {
 
-			// packets creation
 			byte[] myBytes = msg.getBytes();
 			int msgSize = myBytes.length;
 			Long packetCounter = 1L;
-			List<Packet> packetList = new ArrayList<Packet>();
+			List<Packet> requestPacketList = new ArrayList<Packet>();
 			int last = 0;
 			Packet p;
+			List<Packet> responsePacketList = new ArrayList<Packet>();
+
+			// packets creation
 			for (int i = 0; i < msgSize; i++) {
 				if (i % 1013 == 0 && i != 0) {
 
@@ -121,7 +126,7 @@ public class UDPClient {
 					p = new Packet.Builder().setType(0).setSequenceNumber(packetCounter)
 							.setPortNumber(serverAddr.getPort()).setPeerAddress(serverAddr.getAddress())
 							.setPayload(tempByte).create();
-					packetList.add(p);
+					requestPacketList.add(p);
 					last = i;
 					packetCounter++;
 				} else if (i == msgSize - 1) {
@@ -129,34 +134,31 @@ public class UDPClient {
 					p = new Packet.Builder().setType(0).setSequenceNumber(packetCounter)
 							.setPortNumber(serverAddr.getPort()).setPeerAddress(serverAddr.getAddress())
 							.setPayload(tempByte).create();
-					packetList.add(p);
+					requestPacketList.add(p);
 					packetCounter++;
 				}
 			}
 
-			// int sumOfPackets = (packetList.size() * (packetList.size() + 1)) / 2;
 			// handshake:
-			boolean handshakeResult = handshake(routerAddr, serverAddr, channel, packetList.size());
+			boolean handshakeResult = handshake(routerAddr, serverAddr, channel, requestPacketList.size());
 			if (handshakeResult) {
-				for (Packet pkt : packetList) {
+				for (Packet pkt : requestPacketList) {
 					channel.send(pkt.toBuffer(), routerAddr);
 
 				}
 				logger.info("Request packet list sent");
 			}
 
-			// logger.info("Sending \"{}\" to router at {}", msg, routerAddr);
-
 			// Try to receive a packet within timeout.
 			ByteBuffer buf = ByteBuffer.allocate(Packet.MAX_LEN);
 			List<Packet> ACKList = new ArrayList<Packet>();
-			List<Packet> tempList = new ArrayList<Packet>();
+			List<Packet> tempACKList = new ArrayList<Packet>();
+			List<Packet> tempResponseList = new ArrayList<Packet>();
+
 			for (;;) {
-				if (ACKList.size() == packetList.size()){
+				if (ACKList.size() == requestPacketList.size()) {
 					break;
-				}
-				else
-				{
+				} else {
 					buf.clear();
 					channel.configureBlocking(false);
 					Selector selector = Selector.open();
@@ -164,12 +166,10 @@ public class UDPClient {
 					logger.info("Waiting for the response");
 					selector.select(5000);
 
+					// check if ACK is received for all packets, else re-send packets selectively
 					Set<SelectionKey> keys = selector.selectedKeys();
-					if (keys.isEmpty()) {
-						// logger.error("No response after timeout");
-						// return;
-
-						for (Packet p1 : packetList) {
+					if (keys.isEmpty() && ACKList.size() != requestPacketList.size()) {
+						for (Packet p1 : requestPacketList) {
 							boolean flag = false;
 							for (Packet ack1 : ACKList) {
 								if (ack1.getSequenceNumber() != p1.getSequenceNumber())
@@ -179,18 +179,17 @@ public class UDPClient {
 							}
 							if (!flag) {
 								channel.send(p1.toBuffer(), routerAddr);
-								logger.info("Missing ACK " + p1.getSequenceNumber() + "... Resending packet");
+								logger.info("Missing ACK " + p1.getSequenceNumber() + "... Re-sending packet");
 							}
 						}
 						continue;
 					}
 
-					// We just want a single response.
-					// buf.clear();
 					SocketAddress router = channel.receive(buf);
 					buf.flip();
 					Packet resp = Packet.fromBuffer(buf);
 
+					// check if packet type is ACK
 					if (resp.getType() == 3) {
 						if (ACKList.size() == 0) {
 							ACKList.add(resp);
@@ -198,10 +197,10 @@ public class UDPClient {
 
 							for (Packet pkt : ACKList) {
 								if (pkt.getSequenceNumber() != resp.getSequenceNumber()) {
-									tempList.add(pkt);
+									tempACKList.add(pkt);
 								}
 							}
-							ACKList.addAll(tempList);
+							ACKList.addAll(tempACKList);
 						}
 						String payload = new String(resp.getPayload(), StandardCharsets.UTF_8);
 						logger.info("Recieved: " + payload);
@@ -211,8 +210,68 @@ public class UDPClient {
 					}
 
 				}
-				
+
 			}
+
+			logger.info("Outside for!!");
+			for (;;) {
+				// break the loop if last response packet is received
+
+				buf.clear();
+				channel.configureBlocking(false);
+				Selector selector = Selector.open();
+				channel.register(selector, OP_READ);
+				logger.info("Waiting for the response from server..");
+				selector.select(25000);
+
+				// check if ACK is received for all packets, else re-send packets selectively
+				Set<SelectionKey> keys = selector.selectedKeys();
+				if (keys.isEmpty()) {
+					// do something
+					break;
+				}
+
+				SocketAddress router = channel.receive(buf);
+				buf.flip();
+				Packet resp = Packet.fromBuffer(buf);
+
+				if (resp.getType() == 0) {
+					if (responsePacketList.size() == 0) {
+						responsePacketList.add(resp);
+						logger.info("Received response packet " + resp.getSequenceNumber());
+						Packet responseACK = resp.toBuilder().setType(3)
+								.setPayload(("ACK" + resp.getSequenceNumber()).getBytes()).create();
+						channel.send(responseACK.toBuffer(), router);
+						logger.info("Sending ACK " + resp.getSequenceNumber());
+					} else {
+						boolean packetExists = false;
+						for (Packet pkt : responsePacketList) {
+							if (pkt.getSequenceNumber() != resp.getSequenceNumber()) {
+								continue;
+							}
+							else
+								if(pkt.getSequenceNumber() == resp.getSequenceNumber()) {
+									logger.info("Received response packet " + resp.getSequenceNumber());
+									Packet responseACK = resp.toBuilder().setType(3)
+											.setPayload(("ACK" + resp.getSequenceNumber()).getBytes()).create();
+									channel.send(responseACK.toBuffer(), router);
+									logger.info("Sending ACK " + resp.getSequenceNumber());
+									packetExists = true;
+									break;
+								}
+						}
+						if(!packetExists)
+							responsePacketList.add(resp);
+					}
+				}
+			}
+			String responseFromServer = "";
+			Collections.sort(responsePacketList);
+			for(Packet p1 : responsePacketList) {
+				String payload = new String(p1.getPayload(), UTF_8);
+				responseFromServer += payload;
+			}
+			logger.info("Response from the server received: " + responseFromServer);
 		}
 
 	}
